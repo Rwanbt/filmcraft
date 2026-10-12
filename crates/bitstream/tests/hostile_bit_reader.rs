@@ -23,7 +23,7 @@ fn truncated_u64_read_is_atomic_and_a_later_valid_read_still_works() {
     let mut reader = BitReader::new(&bytes);
     assert_eq!(reader.read_bits_u64(64), Err(BitError::Eof));
     assert_eq!(reader.position(), 0);
-    assert_eq!(reader.read_bits_u64(56), Ok(0x1234_5678_9abc_de));
+    assert_eq!(reader.read_bits_u64(56), Ok(0x0012_3456_789a_bcde));
     assert_eq!(reader.bits_left(), 0);
 }
 
