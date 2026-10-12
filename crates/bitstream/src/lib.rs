@@ -144,12 +144,20 @@ impl<'a> BitReader<'a> {
     /// Signed Exp-Golomb `se(v)`.
     pub fn read_se(&mut self) -> Result<i32> {
         let k = self.read_ue()? as i64;
-        Ok(if k & 1 == 1 { ((k + 1) / 2) as i32 } else { -((k / 2) as i32) })
+        let signed = if k & 1 == 1 { (k + 1) / 2 } else { -(k / 2) };
+        i32::try_from(signed).map_err(|_| BitError::InvalidExpGolomb)
     }
 
     /// Truncated Exp-Golomb `te(v)` with range `max`.
     pub fn read_te(&mut self, max: u32) -> Result<u32> {
-        if max > 1 { self.read_ue() } else { Ok(!self.read_bit()? as u32) }
+        match max {
+            0 => Ok(0),
+            1 => Ok(u32::from(!self.read_bit()?)),
+            _ => {
+                let value = self.read_ue()?;
+                if value > max { Err(BitError::InvalidExpGolomb) } else { Ok(value) }
+            }
+        }
     }
 
     /// H.264/HEVC `more_rbsp_data()`: true if there is data before the rbsp trailing bits.
