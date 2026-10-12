@@ -55,7 +55,9 @@ impl<'a> BitReader<'a> {
         self.pos.is_multiple_of(8)
     }
     pub fn byte_align(&mut self) {
-        self.pos = self.pos.div_ceil(8) * 8;
+        // An out-of-bounds seek can be arbitrarily close to usize::MAX.
+        // Do not overflow or move backwards if the next byte is unrepresentable.
+        self.pos = self.pos.checked_next_multiple_of(8).unwrap_or(self.pos);
     }
     /// Byte offset of the current position (rounded down).
     pub fn byte_pos(&self) -> usize {
@@ -84,7 +86,7 @@ impl<'a> BitReader<'a> {
 
     #[inline]
     pub fn read_bits(&mut self, n: u32) -> Result<u32> {
-        if n as usize > self.bits_left() {
+        if n > 32 || n as usize > self.bits_left() {
             return Err(BitError::Eof);
         }
         let v = self.peek(n);
@@ -93,6 +95,11 @@ impl<'a> BitReader<'a> {
     }
 
     pub fn read_bits_u64(&mut self, n: u32) -> Result<u64> {
+        // Check the complete request before consuming the high part. A truncated
+        // 64-bit field must not leave the cursor halfway into the input.
+        if n > 64 || n as usize > self.bits_left() {
+            return Err(BitError::Eof);
+        }
         if n <= 32 {
             return self.read_bits(n).map(u64::from);
         }
@@ -137,12 +144,20 @@ impl<'a> BitReader<'a> {
     /// Signed Exp-Golomb `se(v)`.
     pub fn read_se(&mut self) -> Result<i32> {
         let k = self.read_ue()? as i64;
-        Ok(if k & 1 == 1 { ((k + 1) / 2) as i32 } else { -((k / 2) as i32) })
+        let signed = if k & 1 == 1 { (k + 1) / 2 } else { -(k / 2) };
+        i32::try_from(signed).map_err(|_| BitError::InvalidExpGolomb)
     }
 
     /// Truncated Exp-Golomb `te(v)` with range `max`.
     pub fn read_te(&mut self, max: u32) -> Result<u32> {
-        if max > 1 { self.read_ue() } else { Ok(!self.read_bit()? as u32) }
+        match max {
+            0 => Ok(0),
+            1 => Ok(u32::from(!self.read_bit()?)),
+            _ => {
+                let value = self.read_ue()?;
+                if value > max { Err(BitError::InvalidExpGolomb) } else { Ok(value) }
+            }
+        }
     }
 
     /// H.264/HEVC `more_rbsp_data()`: true if there is data before the rbsp trailing bits.
@@ -306,10 +321,15 @@ pub fn annexb_nals(data: &[u8]) -> Vec<&[u8]> {
 
 /// Split a length-prefixed sample (AVCC/HVCC, `length_size` 1/2/4 bytes) into NAL units.
 pub fn length_prefixed_nals(data: &[u8], length_size: usize) -> Result<Vec<&[u8]>> {
+    // Only avcC/hvcC widths are supported. In particular, a zero width never
+    // advances the cursor and would make a nonempty sample loop forever.
+    if !matches!(length_size, 1 | 2 | 4) {
+        return Err(BitError::Eof);
+    }
     let mut out = Vec::new();
     let mut i = 0;
     while i < data.len() {
-        if i + length_size > data.len() {
+        if length_size > data.len() - i {
             return Err(BitError::Eof);
         }
         let mut len = 0usize;
@@ -317,7 +337,7 @@ pub fn length_prefixed_nals(data: &[u8], length_size: usize) -> Result<Vec<&[u8]
             len = (len << 8) | data[i + k] as usize;
         }
         i += length_size;
-        if i + len > data.len() {
+        if len > data.len() - i {
             return Err(BitError::Eof);
         }
         out.push(&data[i..i + len]);
