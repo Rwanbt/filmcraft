@@ -3,7 +3,7 @@ name: Deterministic quality
 
 on:
   push:
-    branches: [main, 'test/**', 'fix/**']
+    branches: [main]
   pull_request:
     branches: [main]
   workflow_dispatch:
@@ -12,7 +12,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: deterministic-quality-${{ github.workflow }}-${{ github.ref }}
+  group: deterministic-quality-${{ github.workflow }}-${{ github.head_ref || github.ref_name }}
   cancel-in-progress: true
 
 env:
@@ -69,9 +69,27 @@ jobs:
           if-no-files-found: warn
           retention-days: 30
 
+  cross-platform-foundation:
+    name: ${{ matrix.os }} / foundation
+    if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-15]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249 # stable
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          key: deterministic-cross-foundation
+      - name: Portable Rust foundation tests
+        run: cargo test --locked -p filmcraft-time -p filmcraft-bitstream
+
   workspace:
-    name: Linux / full workspace (manual)
-    if: github.event_name == 'workflow_dispatch'
+    name: Linux / full workspace
+    if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-24.04
     timeout-minutes: 180
     steps:
@@ -89,6 +107,22 @@ jobs:
           sudo apt-get install -y --no-install-recommends \
             libasound2-dev libxkbcommon-dev libwayland-dev libx11-dev \
             libxrandr-dev libxi-dev libgl1-mesa-dev ffmpeg pkg-config
+      - name: Collect runner-discovered test inventory
+        env:
+          CARGO_TERM_COLOR: never
+        run: |
+          cargo test --workspace --locked -- --list >test-inventory.txt 2>test-inventory.stderr
+          python3 -c 'from pathlib import Path; x=Path("test-inventory.txt").read_text(errors="replace").splitlines(); n=sum(l.rstrip().endswith(": test") for l in x); print(f"Collected Rust test entries: {n}")'
+      - name: Upload complete test inventory
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: workspace-test-inventory
+          path: |
+            test-inventory.txt
+            test-inventory.stderr
+          if-no-files-found: warn
+          retention-days: 30
       - name: Workspace tests with required local oracles
         env:
           FILMCRAFT_REQUIRE_ORACLES: "1"
