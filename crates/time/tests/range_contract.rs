@@ -11,14 +11,8 @@ fn empty_and_reversed_ranges_never_overlap() {
         for duration in [-10, 0] {
             let empty = TimeRange::new(Tick(start), Tick(duration));
             assert!(empty.is_empty());
-            assert!(
-                !empty.overlaps(&covering),
-                "empty range {empty:?} overlaps a nonempty range"
-            );
-            assert!(
-                !covering.overlaps(&empty),
-                "nonempty range overlaps empty range {empty:?}"
-            );
+            assert!(!empty.overlaps(&covering), "empty range {empty:?} overlaps a nonempty range");
+            assert!(!covering.overlaps(&empty), "nonempty range overlaps empty range {empty:?}");
             assert_eq!(empty.intersect(&covering), None);
             assert_eq!(covering.intersect(&empty), None);
         }
@@ -34,18 +28,11 @@ fn overlap_matches_half_open_set_intersection() {
                 for duration_b in -2..=3 {
                     let a = TimeRange::new(Tick(start_a), Tick(duration_a));
                     let b = TimeRange::new(Tick(start_b), Tick(duration_b));
-                    let expected = duration_a > 0
-                        && duration_b > 0
-                        && start_a < start_b + duration_b
-                        && start_b < start_a + duration_a;
+                    let expected = duration_a > 0 && duration_b > 0 && start_a < start_b + duration_b && start_b < start_a + duration_a;
 
                     assert_eq!(a.overlaps(&b), expected, "a={a:?}, b={b:?}");
                     assert_eq!(b.overlaps(&a), expected, "b={b:?}, a={a:?}");
-                    assert_eq!(
-                        a.intersect(&b).is_some(),
-                        expected,
-                        "intersection disagrees: a={a:?}, b={b:?}"
-                    );
+                    assert_eq!(a.intersect(&b).is_some(), expected, "intersection disagrees: a={a:?}, b={b:?}");
                 }
             }
         }
