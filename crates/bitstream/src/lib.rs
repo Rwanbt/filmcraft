@@ -55,7 +55,9 @@ impl<'a> BitReader<'a> {
         self.pos.is_multiple_of(8)
     }
     pub fn byte_align(&mut self) {
-        self.pos = self.pos.div_ceil(8) * 8;
+        // An out-of-bounds seek can be arbitrarily close to usize::MAX.
+        // Do not overflow or move backwards if the next byte is unrepresentable.
+        self.pos = self.pos.checked_next_multiple_of(8).unwrap_or(self.pos);
     }
     /// Byte offset of the current position (rounded down).
     pub fn byte_pos(&self) -> usize {
@@ -84,7 +86,7 @@ impl<'a> BitReader<'a> {
 
     #[inline]
     pub fn read_bits(&mut self, n: u32) -> Result<u32> {
-        if n as usize > self.bits_left() {
+        if n > 32 || n as usize > self.bits_left() {
             return Err(BitError::Eof);
         }
         let v = self.peek(n);
@@ -93,6 +95,11 @@ impl<'a> BitReader<'a> {
     }
 
     pub fn read_bits_u64(&mut self, n: u32) -> Result<u64> {
+        // Check the complete request before consuming the high part. A truncated
+        // 64-bit field must not leave the cursor halfway into the input.
+        if n > 64 || n as usize > self.bits_left() {
+            return Err(BitError::Eof);
+        }
         if n <= 32 {
             return self.read_bits(n).map(u64::from);
         }
